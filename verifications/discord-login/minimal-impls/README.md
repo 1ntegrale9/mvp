@@ -2,6 +2,10 @@
 
 Discordログインの最小実装をフレームワーク別に置きます。
 
+## 実装
+
+- `node-http/`: Node.js標準ライブラリだけでAuthorization Code Grantを確認する最小実装
+
 ## 追加ルール
 
 - ディレクトリ名は `nextjs`, `hono`, `express` のように技術名で分けます。

@@ -1,0 +1,15 @@
+{
+  "name": "@verifications/discord-login-node-http",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "check": "node --check src/server.mjs && node --check scripts/preflight.mjs && node --check scripts/smoke.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

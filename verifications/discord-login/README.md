@@ -43,14 +43,36 @@ SESSION_SECRET=
 
 ## 最小実装
 
-最小実装は `minimal-impls/` に追加します。フレームワークごとにディレクトリを分けます。
+最小実装は `minimal-impls/` に追加します。まずは依存なしで流れを確認できる `node-http/` を標準の検証入口にします。フレームワーク固有の実装は必要になった時点で追加します。
 
 ```text
 minimal-impls/
+├── node-http/
 ├── nextjs/
 ├── hono/
 └── express/
 ```
+
+### 推奨する最初の確認
+
+1. Discord Developer PortalでApplicationを作成します。
+2. OAuth2 Redirectsに `http://localhost:8787/callback` を登録します。
+3. `minimal-impls/node-http/.env.example` を `.env` にコピーし、Client IDとClient Secretを設定します。
+4. `minimal-impls/node-http/` で `npm run preflight` を実行します。
+5. `minimal-impls/node-http/` で `npm start` を実行します。
+6. `http://localhost:8787` からログイン開始、Callback、ユーザー情報取得まで確認します。
+7. `http://localhost:8787/result` または `verification-result.local.json` で完走結果を確認します。
+
+この最小実装はログインフローの検証用です。永続セッション、DB保存、認可、リフレッシュトークン保存は含みません。
+
+### 完走確認済み
+
+- 確認日: 2026-06-08
+- 実装: `minimal-impls/node-http/`
+- Redirect URI: `http://localhost:8787/callback`
+- Scope: `identify`
+- 結果: Authorization Code Grant、`state` Cookie検証、token交換、`/users/@me` 取得、確認結果のローカル保存まで成功
+- 注意: 成功時の `verification-result.local.json` はトークンを含みませんが、ユーザー識別子を含むためコミットしません。
 
 ## MVP側に残すメモ
 

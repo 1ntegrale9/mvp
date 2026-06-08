@@ -39,5 +39,6 @@ pnpm-debug.log*
 *.sqlite
 *.sqlite3
 *.db
+*.local.json
 tmp/
 temp/
