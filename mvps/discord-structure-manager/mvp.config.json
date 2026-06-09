@@ -1,0 +1,10 @@
+{
+  "slug": "discord-structure-manager",
+  "name": "Discord構成マネージャー",
+  "status": "local-mvp",
+  "owner": "1ntegrale9",
+  "createdAt": "2026-06-10",
+  "summary": "Discord channel, role, and permission preset manager for local MVP validation.",
+  "apps": ["apps/web"],
+  "tags": ["discord", "permissions", "admin-tool", "local-mvp"]
+}
