@@ -40,6 +40,7 @@ Discordのactive threads取得は `GET /guilds/{guild.id}/threads/active` でgui
 - チャンネル階層は `parentId` で表す。`parentId` はカテゴリだけでなく、スレッドの親テキスト/フォーラムチャンネルも指せる。
 - カテゴリ同期の対象は「親がカテゴリのチャンネル」だけに限定する。スレッドにはカテゴリ同期ボタンを出さない。
 - スレッドの権限編集は、親チャンネルの有効権限へ反映する。
+- 実サーバー96件のread-only importでは生成JSONが約11MBになり、ブラウザのlocalStorage上限を超える。生成JSONは `.gitignore` 対象のファイルから読み込み、localStorageへ丸ごと保存できなくても画面反映を止めない。
 
 ## Known Gaps
 

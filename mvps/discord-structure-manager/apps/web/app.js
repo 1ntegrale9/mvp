@@ -1169,9 +1169,9 @@ function saveDraft() {
   savedState = clone(draft);
   upsertGuildState(savedState);
   guildStore.activeGuildId = activeGuildId;
-  persistGuildStore();
+  const persisted = persistGuildStore();
   editing = false;
-  showToast("保存しました");
+  showToast(persisted ? "保存しました" : "保存しました（大きい読込データのため、このセッションのみ）");
 }
 
 function discardDraft() {
@@ -1353,7 +1353,13 @@ function upsertGuildState(guildState) {
 }
 
 function persistGuildStore() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(guildStore));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(guildStore));
+    return true;
+  } catch (error) {
+    console.warn("Guild store was not persisted. The imported Discord data may be larger than localStorage.", error);
+    return false;
+  }
 }
 
 function defaultCollapsedChannelIds(state) {
