@@ -313,6 +313,9 @@ function renderChannelRow(channel) {
       data-kind="channel"
       data-id="${channel.id}"
       ${indent}>
+      ${canCollapse
+        ? `<button class="btn icon collapse-toggle" data-action="toggle-channel-collapse" data-id="${channel.id}" aria-label="${escapeAttr(channel.name)}を${collapsed ? "開く" : "閉じる"}" title="${escapeAttr(channel.name)}を${collapsed ? "開く" : "閉じる"}">${disclosureIcon(collapsed)}</button>`
+        : `<span class="collapse-spacer" aria-hidden="true"></span>`}
       <input type="checkbox"
         data-action="${checkboxAction}"
         data-id="${channel.id}"
@@ -322,9 +325,6 @@ function renderChannelRow(channel) {
         ${checkboxDisabled}
         ${checkboxIndeterminate} />
       <span class="drag-handle" title="ドラッグして移動">::::</span>
-      ${canCollapse
-        ? `<button class="btn icon collapse-toggle" data-action="toggle-channel-collapse" data-id="${channel.id}" aria-label="${escapeAttr(channel.name)}を${collapsed ? "開く" : "閉じる"}" title="${escapeAttr(channel.name)}を${collapsed ? "開く" : "閉じる"}">${collapsed ? "+" : "-"}</button>`
-        : `<span class="collapse-spacer" aria-hidden="true"></span>`}
       <button class="name-line bare" data-action="activate-channel" data-id="${channel.id}">
         <span class="type-badge">${channelIcon(channel.type)}</span>
         <span class="channel-name-stack">
@@ -367,12 +367,14 @@ function renderRoles() {
   return `
     <section class="panel">
       <div class="panel-header">
-        <div>
-          <h2 class="panel-title">ロール</h2>
-          <p class="panel-subtitle">${selectedRoles.size}件選択中 · 上にあるほど強い権限</p>
+        <div class="panel-heading-with-toggle">
+          <button class="btn icon collapse-toggle" data-action="toggle-roles-collapse" aria-label="ロール一覧を${rolesCollapsed ? "開く" : "閉じる"}" title="ロール一覧を${rolesCollapsed ? "開く" : "閉じる"}">${disclosureIcon(rolesCollapsed)}</button>
+          <div>
+            <h2 class="panel-title">ロール</h2>
+            <p class="panel-subtitle">${selectedRoles.size}件選択中 · 上にあるほど強い権限</p>
+          </div>
         </div>
         <div class="toolbar compact">
-          <button class="btn icon collapse-toggle" data-action="toggle-roles-collapse" aria-label="ロール一覧を${rolesCollapsed ? "開く" : "閉じる"}" title="ロール一覧を${rolesCollapsed ? "開く" : "閉じる"}">${rolesCollapsed ? "+" : "-"}</button>
           <button class="btn" data-action="select-all-roles">すべて選択</button>
         </div>
       </div>
@@ -383,6 +385,10 @@ function renderRoles() {
       </div>
     </section>
   `;
+}
+
+function disclosureIcon(collapsed) {
+  return `<span class="disclosure-icon" aria-hidden="true">${collapsed ? "▶" : "▼"}</span>`;
 }
 
 function renderRoleRow(role) {

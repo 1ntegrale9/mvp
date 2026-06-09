@@ -267,6 +267,13 @@ input:disabled {
   border-bottom: 1px solid var(--line);
 }
 
+.panel-heading-with-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
 .panel-title {
   margin: 0;
   font-size: 14px;
@@ -352,7 +359,7 @@ input[type="text"] {
 }
 
 .channel-row {
-  grid-template-columns: 22px 22px 28px minmax(0, 1fr) auto;
+  grid-template-columns: 28px 22px 22px minmax(0, 1fr) auto;
 }
 
 .role-row {
@@ -393,7 +400,22 @@ input[type="text"] {
   padding: 0;
   color: var(--muted);
   background: #fff;
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.collapse-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.disclosure-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
 }
 
 .collapse-spacer {
