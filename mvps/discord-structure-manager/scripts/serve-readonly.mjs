@@ -2,12 +2,12 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createDiscordRestClient } from "./lib/discord-rest-client.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const webDir = path.join(rootDir, "apps", "web");
-const apiBase = "https://discord.com/api/v10";
 
 const channelTypes = {
   10: "announcement_thread",
@@ -21,11 +21,20 @@ const token = process.env.DISCORD_BOT_TOKEN;
 const port = Number(process.env.PORT || 5173);
 const requestTimeoutMs = Number(process.env.DISCORD_API_TIMEOUT_MS || 15000);
 const requestDelayMs = Number(process.env.DISCORD_API_DELAY_MS || 1500);
+const requestJitterMs = Number(process.env.DISCORD_API_JITTER_MS || 250);
 const activeThreadsCacheMs = Number(process.env.DISCORD_ACTIVE_THREADS_CACHE_MS || 600000);
-const maxRetries = Number(process.env.DISCORD_API_MAX_RETRIES || 1);
+const maxRetries = Number(process.env.DISCORD_API_MAX_RETRIES || 3);
+const invalidRequestAbortAfter = Number(process.env.DISCORD_INVALID_REQUEST_ABORT_AFTER || 25);
+const discord = token ? createDiscordRestClient({
+  token,
+  requestTimeoutMs,
+  minRequestDelayMs: requestDelayMs,
+  requestJitterMs,
+  maxRetries,
+  invalidRequestAbortAfter,
+  logger: (message) => console.log(message),
+}) : null;
 const activeThreadCache = new Map();
-let lastRequestAt = 0;
-let discordQueue = Promise.resolve();
 
 const server = http.createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
@@ -65,6 +74,10 @@ async function handleThreadsRequest(request, response, url) {
   }
   if (!token) {
     sendJson(response, 500, { status: "failed", message: "DISCORD_BOT_TOKEN is missing in .env" });
+    return;
+  }
+  if (!discord) {
+    sendJson(response, 500, { status: "failed", message: "Discord API client is not initialized" });
     return;
   }
 
@@ -108,7 +121,7 @@ async function getActiveThreads(guildId) {
     return { threads, cache: "shared-pending" };
   }
 
-  const promise = queueDiscordGet(`/guilds/${guildId}/threads/active`)
+  const promise = discord.get(`/guilds/${guildId}/threads/active`)
     .then((payload) => Array.isArray(payload.threads) ? payload.threads : []);
   activeThreadCache.set(guildId, { promise });
 
@@ -132,7 +145,7 @@ async function fetchPublicArchivedThreads(channelId) {
   for (;;) {
     const query = new URLSearchParams({ limit: "100" });
     if (before) query.set("before", before);
-    const page = await queueDiscordGet(`/channels/${channelId}/threads/archived/public?${query}`);
+    const page = await discord.get(`/channels/${channelId}/threads/archived/public?${query}`);
     const pageThreads = Array.isArray(page.threads) ? page.threads : [];
     threads.push(...pageThreads);
     if (!page.has_more || pageThreads.length === 0) break;
@@ -141,70 +154,6 @@ async function fetchPublicArchivedThreads(channelId) {
   }
 
   return threads;
-}
-
-function queueDiscordGet(route) {
-  const next = discordQueue.then(() => discordGet(route));
-  discordQueue = next.catch(() => {});
-  return next;
-}
-
-async function discordGet(route, attempt = 0) {
-  await throttleDiscordRequest();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  let response;
-
-  try {
-    response = await fetch(`${apiBase}${route}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bot ${token}`,
-        Accept: "application/json",
-      },
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeoutError = new Error(`Discord API timed out after ${requestTimeoutMs}ms`);
-      timeoutError.status = "timeout";
-      throw timeoutError;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (response.status === 429) {
-    const body = await response.json().catch(() => ({}));
-    const retryAfterMs = body.retry_after ? Math.ceil(body.retry_after * 1000) : null;
-    if (!retryAfterMs || attempt >= maxRetries) {
-      const error = new Error(body.message || "Discord API rate limit");
-      error.status = 429;
-      error.retryAfterMs = retryAfterMs;
-      throw error;
-    }
-    await sleep(retryAfterMs);
-    return discordGet(route, attempt + 1);
-  }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    const error = new Error(`Discord API returned ${response.status}`);
-    error.status = response.status;
-    error.body = body.slice(0, 300);
-    throw error;
-  }
-
-  return response.json();
-}
-
-async function throttleDiscordRequest() {
-  const elapsed = Date.now() - lastRequestAt;
-  if (elapsed < requestDelayMs) {
-    await sleep(requestDelayMs - elapsed);
-  }
-  lastRequestAt = Date.now();
 }
 
 async function serveStatic(request, response, url) {
@@ -294,10 +243,6 @@ function contentType(filePath) {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
   }[ext] || "application/octet-stream";
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function loadEnv(envPath) {

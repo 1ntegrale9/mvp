@@ -1,12 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createDiscordRestClient, shouldAbortDiscordImport } from "./lib/discord-rest-client.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const outputPath = path.join(rootDir, "apps", "web", "data", "discord-guilds.json");
-const apiBase = "https://discord.com/api/v10";
 
 const permissionBits = {
   VIEW_CHANNEL: 1n << 10n,
@@ -52,8 +52,20 @@ const includeActiveThreads = process.env.DISCORD_FETCH_ACTIVE_THREADS === "true"
 const includeArchivedThreads = process.env.DISCORD_FETCH_ARCHIVED_THREADS === "true";
 const requestTimeoutMs = Number(process.env.DISCORD_API_TIMEOUT_MS || 15000);
 const requestDelayMs = Number(process.env.DISCORD_API_DELAY_MS || 1500);
+const requestJitterMs = Number(process.env.DISCORD_API_JITTER_MS || 250);
+const maxRetries = Number(process.env.DISCORD_API_MAX_RETRIES || 3);
+const invalidRequestAbortAfter = Number(process.env.DISCORD_INVALID_REQUEST_ABORT_AFTER || 25);
+const importMaxGuilds = optionalPositiveInteger(process.env.DISCORD_IMPORT_MAX_GUILDS);
+const discord = createDiscordRestClient({
+  token,
+  requestTimeoutMs,
+  minRequestDelayMs: requestDelayMs,
+  requestJitterMs,
+  maxRetries,
+  invalidRequestAbortAfter,
+  logger: (message) => console.error(message),
+});
 let fetchedAt = null;
-let lastRequestAt = 0;
 
 try {
   await main();
@@ -69,8 +81,12 @@ try {
 
 async function main() {
   fetchedAt = new Date().toISOString();
-  const bot = await discordGet("/users/@me");
-  const guildSummaries = await fetchAllGuilds();
+  const bot = await discord.get("/users/@me");
+  let guildSummaries = await fetchAllGuilds();
+  const guildsDiscovered = guildSummaries.length;
+  if (importMaxGuilds) {
+    guildSummaries = guildSummaries.slice(0, importMaxGuilds);
+  }
   const guilds = [];
   const accessIssues = [];
 
@@ -80,6 +96,7 @@ async function main() {
       const guild = await fetchGuildStructure(guildSummary);
       guilds.push(guild);
     } catch (error) {
+      if (shouldAbortDiscordImport(error)) throw error;
       accessIssues.push({
         guildId: guildSummary.id,
         guildName: guildSummary.name,
@@ -99,7 +116,8 @@ async function main() {
     guilds,
     accessIssues,
     summary: {
-      guildsDiscovered: guildSummaries.length,
+      guildsDiscovered,
+      guildsPlanned: guildSummaries.length,
       guildsFetched: guilds.length,
       channels: guilds.reduce((sum, guild) => sum + guild.channels.length, 0),
       roles: guilds.reduce((sum, guild) => sum + guild.roles.length, 0),
@@ -107,6 +125,10 @@ async function main() {
       activeThreadsFetched: includeActiveThreads,
       archivedThreadsFetched: includeArchivedThreads,
       requestDelayMs,
+      requestJitterMs,
+      maxRetries,
+      invalidRequestAbortAfter,
+      discordRequests: discord.getMetrics(),
     },
   };
 
@@ -117,7 +139,8 @@ async function main() {
     status: "ok",
     fetchedAt,
     botId: bot.id,
-    guildsDiscovered: output.summary.guildsDiscovered,
+    guildsDiscovered,
+    guildsPlanned: guildSummaries.length,
     guildsFetched: output.summary.guildsFetched,
     channels: output.summary.channels,
     roles: output.summary.roles,
@@ -126,6 +149,8 @@ async function main() {
     activeThreadsFetched: includeActiveThreads,
     archivedThreadsFetched: includeArchivedThreads,
     requestDelayMs,
+    requestJitterMs,
+    discordRequests: discord.getMetrics(),
     outputPath,
   }, null, 2));
 }
@@ -137,7 +162,7 @@ async function fetchAllGuilds() {
   for (;;) {
     const query = new URLSearchParams({ limit: "200", with_counts: "true" });
     if (after) query.set("after", after);
-    const page = await discordGet(`/users/@me/guilds?${query}`);
+    const page = await discord.get(`/users/@me/guilds?${query}`);
     guilds.push(...page);
     if (page.length < 200) break;
     after = page[page.length - 1].id;
@@ -148,14 +173,15 @@ async function fetchAllGuilds() {
 
 async function fetchGuildStructure(guildSummary) {
   const guildIssues = [];
-  const channelsRaw = await discordGet(`/guilds/${guildSummary.id}/channels`);
-  const rolesRaw = await discordGet(`/guilds/${guildSummary.id}/roles`);
+  const channelsRaw = await discord.get(`/guilds/${guildSummary.id}/channels`);
+  const rolesRaw = await discord.get(`/guilds/${guildSummary.id}/roles`);
   let activeThreads = [];
   if (includeActiveThreads) {
     try {
-      const activeThreadsResult = await discordGet(`/guilds/${guildSummary.id}/threads/active`);
+      const activeThreadsResult = await discord.get(`/guilds/${guildSummary.id}/threads/active`);
       activeThreads = Array.isArray(activeThreadsResult.threads) ? activeThreadsResult.threads : [];
     } catch (error) {
+      if (shouldAbortDiscordImport(error)) throw error;
       guildIssues.push({
         scope: "active_threads",
         status: error.status || null,
@@ -171,6 +197,7 @@ async function fetchGuildStructure(guildSummary) {
       try {
         archivedThreadResults.push(await fetchPublicArchivedThreads(channel.id));
       } catch (error) {
+        if (shouldAbortDiscordImport(error)) throw error;
         guildIssues.push({
           scope: "public_archived_threads",
           channelId: channel.id,
@@ -202,6 +229,7 @@ async function fetchGuildStructure(guildSummary) {
     limitations: [
       ...(includeActiveThreads ? [] : ["Active threads were not fetched during bulk import. Use the screen-level thread fetch button to load them per channel."]),
       ...(includeArchivedThreads ? [] : ["Archived threads were not fetched by default. Set DISCORD_FETCH_ARCHIVED_THREADS=true to include public archived threads."]),
+      ...(importMaxGuilds ? [`Import was limited to ${importMaxGuilds} guilds by DISCORD_IMPORT_MAX_GUILDS.`] : []),
     ],
     lastSavedAt: null,
   };
@@ -214,7 +242,7 @@ async function fetchPublicArchivedThreads(channelId) {
   for (;;) {
     const query = new URLSearchParams({ limit: "100" });
     if (before) query.set("before", before);
-    const page = await discordGet(`/channels/${channelId}/threads/archived/public?${query}`);
+    const page = await discord.get(`/channels/${channelId}/threads/archived/public?${query}`);
     const pageThreads = Array.isArray(page.threads) ? page.threads : [];
     threads.push(...pageThreads);
     if (!page.has_more || pageThreads.length === 0) break;
@@ -363,61 +391,9 @@ function uniqueById(items) {
   return [...new Map(items.map((item) => [item.id, item])).values()];
 }
 
-async function discordGet(route) {
-  await throttleDiscordRequest();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  let response;
-
-  try {
-    response = await fetch(`${apiBase}${route}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bot ${token}`,
-        Accept: "application/json",
-      },
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeoutError = new Error(`Discord GET ${route} timed out after ${requestTimeoutMs}ms`);
-      timeoutError.status = "timeout";
-      throw timeoutError;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (response.status === 429) {
-    const body = await response.json().catch(() => ({}));
-    if (!body.retry_after) {
-      const error = new Error(body.message || `Discord GET ${route} failed with 429`);
-      error.status = 429;
-      throw error;
-    }
-    const delay = Math.ceil((body.retry_after || 1) * 1000);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    return discordGet(route);
-  }
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    const error = new Error(`Discord GET ${route} failed with ${response.status}`);
-    error.status = response.status;
-    error.body = text.slice(0, 300);
-    throw error;
-  }
-
-  return response.json();
-}
-
-async function throttleDiscordRequest() {
-  const elapsed = Date.now() - lastRequestAt;
-  if (elapsed < requestDelayMs) {
-    await new Promise((resolve) => setTimeout(resolve, requestDelayMs - elapsed));
-  }
-  lastRequestAt = Date.now();
+function optionalPositiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 async function loadEnv(envPath) {
