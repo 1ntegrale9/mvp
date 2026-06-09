@@ -26,6 +26,8 @@ cp -R templates/mvp mvps/<mvp-slug>
 
 Discordログインのように複数MVPで繰り返し使う検証は `verifications/` に残します。MVP固有の試作や知見は、各MVPの `experiments/` と `docs/knowledge/` に残します。
 
+横断的な開発知見は `docs/mvp-development-learnings.md` にまとめます。
+
 ## 別リポジトリへ発展させる
 
 `mvps/<mvp-slug>/` の中身を新しいリポジトリのルートとして移します。移行後、このリポジトリ側では継続追跡しません。
