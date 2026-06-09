@@ -35,6 +35,7 @@ const discord = token ? createDiscordRestClient({
   logger: (message) => console.log(message),
 }) : null;
 const activeThreadCache = new Map();
+const threadButtonQueue = createAsyncJobQueue();
 
 const server = http.createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
@@ -83,17 +84,15 @@ async function handleThreadsRequest(request, response, url) {
 
   const guildId = url.searchParams.get("guildId") || "";
   const channelId = url.searchParams.get("channelId") || "";
-  const includeArchived = url.searchParams.get("archived") === "true";
+  const includeArchived = url.searchParams.get("archived") !== "false";
 
   if (!isDiscordId(guildId) || !isDiscordId(channelId)) {
     sendJson(response, 400, { status: "failed", message: "guildId and channelId must be Discord snowflake IDs" });
     return;
   }
 
-  const activeResult = await getActiveThreads(guildId);
-  const activeThreads = activeResult.threads.filter((thread) => thread.parent_id === channelId);
-  const archivedThreads = includeArchived ? await fetchPublicArchivedThreads(channelId) : [];
-  const threads = uniqueById([...activeThreads, ...archivedThreads]).map(normalizeThread);
+  const result = await fetchThreadsWithButtonQueue({ guildId, channelId, includeArchived });
+  const threads = uniqueById([...result.activeThreads, ...result.archivedThreads]).map(normalizeThread);
 
   sendJson(response, 200, {
     status: "ok",
@@ -102,12 +101,43 @@ async function handleThreadsRequest(request, response, url) {
     channelId,
     fetchedAt: new Date().toISOString(),
     cache: {
-      activeThreads: activeResult.cache,
+      activeThreads: result.activeCache,
       activeThreadsCacheMs,
     },
     archivedIncluded: includeArchived,
+    queue: {
+      jobsEnqueued: result.jobsEnqueued,
+      jobsProcessed: result.jobsProcessed,
+    },
+    counts: {
+      activeThreads: result.activeThreads.length,
+      archivedThreads: result.archivedThreads.length,
+      totalThreads: threads.length,
+    },
     threads,
   });
+}
+
+async function fetchThreadsWithButtonQueue({ guildId, channelId, includeArchived }) {
+  const result = await threadButtonQueue.enqueue({
+    kind: "thread_bundle",
+    label: `${guildId}/${channelId}`,
+    run: async () => {
+      const activeResult = await getActiveThreads(guildId);
+      const archivedThreads = includeArchived ? await fetchPublicArchivedThreads(channelId) : [];
+      return {
+        activeCache: activeResult.cache,
+        activeThreads: activeResult.threads.filter((thread) => thread.parent_id === channelId),
+        archivedThreads,
+      };
+    },
+  });
+
+  return {
+    ...result,
+    jobsEnqueued: 1,
+    jobsProcessed: 1,
+  };
 }
 
 async function getActiveThreads(guildId) {
@@ -210,6 +240,56 @@ function normalizeThread(thread) {
 
 function uniqueById(items) {
   return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
+function createAsyncJobQueue() {
+  const jobs = [];
+  let cursor = 0;
+  let running = false;
+  let processed = 0;
+
+  return {
+    enqueue(job) {
+      let resolveJob;
+      let rejectJob;
+      const promise = new Promise((resolve, reject) => {
+        resolveJob = resolve;
+        rejectJob = reject;
+      });
+      jobs.push({ ...job, resolve: resolveJob, reject: rejectJob });
+      void drain();
+      return promise;
+    },
+    get stats() {
+      return {
+        enqueued: jobs.length,
+        processed,
+        pending: jobs.length - cursor,
+      };
+    },
+  };
+
+  async function drain() {
+    if (running) return;
+    running = true;
+    try {
+      while (cursor < jobs.length) {
+        const job = jobs[cursor];
+        cursor += 1;
+        console.log(`Thread button queue ${cursor}/${jobs.length} [${job.kind}]: ${job.label}`);
+        try {
+          const result = await job.run();
+          processed += 1;
+          job.resolve(result);
+        } catch (error) {
+          processed += 1;
+          job.reject(error);
+        }
+      }
+    } finally {
+      running = false;
+    }
+  }
 }
 
 function isDiscordId(value) {

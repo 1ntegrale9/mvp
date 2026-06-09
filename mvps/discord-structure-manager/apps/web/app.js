@@ -356,7 +356,7 @@ function renderThreadFetchButton(channel) {
   const enabled = draft.source === "discord-api-read-only" && !isDirty() && !loading;
   const label = loading ? "取得中" : hasThreads ? "再取得" : "スレッド取得";
   const title = enabled
-    ? "このチャンネルのスレッドを取得"
+    ? "active threadsとarchived threadsの一括取得ジョブを追加"
     : draft.source !== "discord-api-read-only"
       ? "Discord読込データで有効"
       : "保存または破棄してから取得";
@@ -680,6 +680,7 @@ async function fetchThreadsForChannel(channelId) {
 
   try {
     const query = new URLSearchParams({ guildId: activeGuildId, channelId });
+    query.set("archived", "true");
     const response = await fetch(`/api/discord/threads?${query}`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -702,7 +703,7 @@ async function fetchThreadsForChannel(channelId) {
       fetchedAt: payload.fetchedAt || null,
     });
     render();
-    showToast(`${threads.length}件のスレッドを取得しました`);
+    showToast(`${threads.length}件のスレッドを一括取得しました`);
   } catch (error) {
     threadFetchStatus.set(channelId, { state: "error", message: error.message });
     render();

@@ -17,35 +17,41 @@ Discord Bot tokenで全サーバー構成をread-only取得する場合、一括
 
 ## Request Estimate
 
-デフォルト設定ではスレッドを一括取得しないため、概算リクエスト数は次の形になる。
+現在のデフォルト設定ではactive threadsも自動取得するため、概算リクエスト数は次の形になる。
 
 ```text
 1                     # GET /users/@me
 + ceil(guildCount/200) # GET /users/@me/guilds pages
 + guildCount * 2       # GET /guilds/{id}/channels and /guilds/{id}/roles
++ guildCount           # GET /guilds/{id}/threads/active in the thread_fetch lane
 ```
 
-100 guildなら約202リクエスト、500 guildなら約1004リクエスト。`DISCORD_API_DELAY_MS=1500` と `DISCORD_API_JITTER_MS=250` のQueue逐次処理では、秒間1リクエスト未満になる。Discord公式のglobal rate limitより十分低いが、per-routeや一時的なCloudflareブロックは外部状態に依存するため、ヘッダー追従と停止条件が必要。
+100 guildなら約302リクエスト、500 guildなら約1504リクエスト。`DISCORD_API_DELAY_MS=1500` と `DISCORD_API_JITTER_MS=250` のQueue逐次処理では、秒間1リクエスト未満になる。Discord公式のglobal rate limitより十分低いが、per-routeや一時的なCloudflareブロックは外部状態に依存するため、ヘッダー追従と停止条件が必要。
 
 ## Fixes
 
 - `scripts/lib/discord-rest-client.mjs` を追加し、一括取得と画面取得APIのDiscord GETを共通化した。
 - すべてのDiscord API呼び出しを内部Queueで逐次処理する。
+- 一括取得スクリプトは、チャンネル構成、ロール一覧、スレッド取得の3種類のFIFO Queueレーンを持つ。
+- 初期計画時点で各guildの `channels`、`roles`、`threads/active` ジョブをそれぞれのレーンへ積む。スレッド取得ジョブをチャンネル構成レーン完了後に追加する仕様は使わない。
+- 実行順は `channel_structure -> role_list -> thread_fetch`。各レーン内はFIFOで、同時に複数のDiscord GETを発火しない。
 - `X-RateLimit-Bucket`、`X-RateLimit-Remaining`、`X-RateLimit-Reset-After` を読み、同じbucketが枯れた場合は次の同系統routeをreset後まで待つ。
 - 429では `Retry-After` ヘッダー、`X-RateLimit-Reset-After`、JSON bodyの `retry_after` の順で待機時間を決める。
 - `retry_after` が無い429は待機ループに入らず即停止する。
 - 429、401、403などのinvalid responseが `DISCORD_INVALID_REQUEST_ABORT_AFTER` に達したら停止する。
 - guild取得中に429やinvalid budget超過が出た場合、次のguildへ進まず一括取得全体を停止する。
-- 画面上のスレッド取得ボタンも同じQueueを通す。ボタン連打や複数リクエストが重なってもDiscord APIへは逐次送る。
+- 画面上のスレッド取得ボタンは、active threadsと対象チャンネルのpublic archived threadsをまとめた一括取得ジョブをローカルサーバー側のQueueへ追加する。
+- ボタン由来の一括取得ジョブ内では、active threads取得、public archived threads取得の順に実行する。active側でrate limitなどが起きた場合、archived側だけ続けない。
+- 一括取得でも、active threadsが失敗したguildではpublic archived threads全探索をスキップし、権限不足や一時制限をチャンネル数ぶん重ねない。
 - active threadsはguild単位で取得されるため、read-only server側で `DISCORD_ACTIVE_THREADS_CACHE_MS` の間キャッシュし、チャンネルごとに絞り込む。
 - 環境変数由来の数値設定が壊れても危険側へ倒れないように、RESTクライアント内部でデフォルト値へ正規化する。
 - `scripts/discord-rest-client.test.mjs` でQueue逐次性、bucket待機、429 retry、retry-after無し429停止、数値設定の正規化を合成テストした。
 
 ## Current Policy
 
-- デフォルトの一括取得は通常チャンネル、ロール、権限上書きだけにする。
-- active threadsとarchived threadsは一括取得しない。
-- スレッドは画面上の `スレッド取得` ボタンで必要なチャンネルだけ取得する。
+- デフォルトの一括取得は通常チャンネル、ロール、権限上書き、active threadsを取得する。
+- active threadsはスレッド取得レーンに最初から積まれ、チャンネル構成とロール一覧のレーン完了後に自動取得する。
+- スレッドの画面上 `スレッド取得` ボタンは、再取得や個別確認に使う。
 - archived threadsは件数が多いため、明示フラグなしでは取得しない。
 - `DISCORD_IMPORT_MAX_GUILDS` は通常空にして全サーバー対象にする。rate limit挙動や権限不足を調査するときだけ一時的に絞る。
 

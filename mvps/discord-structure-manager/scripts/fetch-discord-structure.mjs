@@ -48,7 +48,6 @@ if (!token) {
   throw new Error("DISCORD_BOT_TOKEN is missing in .env");
 }
 
-const includeActiveThreads = process.env.DISCORD_FETCH_ACTIVE_THREADS === "true";
 const includeArchivedThreads = process.env.DISCORD_FETCH_ARCHIVED_THREADS === "true";
 const requestTimeoutMs = Number(process.env.DISCORD_API_TIMEOUT_MS || 15000);
 const requestDelayMs = Number(process.env.DISCORD_API_DELAY_MS || 1500);
@@ -87,24 +86,39 @@ async function main() {
   if (importMaxGuilds) {
     guildSummaries = guildSummaries.slice(0, importMaxGuilds);
   }
-  const guilds = [];
   const accessIssues = [];
+  const guildRecords = guildSummaries.map((guildSummary) => createGuildRecord(guildSummary));
+  const importQueue = createImportQueueLanes();
+  const queueSummary = createQueueSummary();
 
-  for (const [index, guildSummary] of guildSummaries.entries()) {
-    try {
-      console.error(`Fetching guild ${index + 1}/${guildSummaries.length}: ${guildSummary.id}`);
-      const guild = await fetchGuildStructure(guildSummary);
-      guilds.push(guild);
-    } catch (error) {
-      if (shouldAbortDiscordImport(error)) throw error;
-      accessIssues.push({
-        guildId: guildSummary.id,
-        guildName: guildSummary.name,
-        status: error.status || null,
-        message: error.message,
+  for (const [index, record] of guildRecords.entries()) {
+    const labelSuffix = `${index + 1}/${guildRecords.length}: ${record.guildSummary.id}`;
+    importQueue.enqueue("channel_structure", {
+      kind: "channels",
+      label: `channels ${labelSuffix}`,
+      run: () => runChannelLaneJob({ record, accessIssues, queueSummary }),
+    });
+    importQueue.enqueue("role_list", {
+      kind: "roles",
+      label: `roles ${labelSuffix}`,
+      run: () => runRoleLaneJob({ record, accessIssues, queueSummary }),
+    });
+    importQueue.enqueue("thread_fetch", {
+      kind: "active_threads",
+      label: `active threads ${labelSuffix}`,
+      run: () => runActiveThreadLaneJob({ record, queueSummary }),
+    });
+    if (includeArchivedThreads) {
+      importQueue.enqueue("thread_fetch", {
+        kind: "archived_threads",
+        label: `public archived threads ${labelSuffix}`,
+        run: () => runArchivedThreadLaneJob({ record, queueSummary }),
       });
     }
   }
+
+  await importQueue.run();
+  const guilds = buildGuildsFromRecords(guildRecords, accessIssues);
 
   const output = {
     fetchedAt,
@@ -122,8 +136,14 @@ async function main() {
       channels: guilds.reduce((sum, guild) => sum + guild.channels.length, 0),
       roles: guilds.reduce((sum, guild) => sum + guild.roles.length, 0),
       permissionOverwriteTargets: guilds.reduce((sum, guild) => sum + Object.keys(guild.overrides).length, 0),
-      activeThreadsFetched: includeActiveThreads,
+      activeThreadsFetched: true,
       archivedThreadsFetched: includeArchivedThreads,
+      activeThreadFetchMode: "three-fifo-lanes",
+      importQueuePlan: "channel_structure -> role_list -> thread_fetch",
+      importQueueLanes: importQueue.summary(),
+      importQueueJobsEnqueued: importQueue.enqueued,
+      importQueueJobsProcessed: importQueue.processed,
+      ...queueSummary,
       requestDelayMs,
       requestJitterMs,
       maxRetries,
@@ -146,8 +166,13 @@ async function main() {
     roles: output.summary.roles,
     permissionOverwriteTargets: output.summary.permissionOverwriteTargets,
     accessIssueCount: accessIssues.length,
-    activeThreadsFetched: includeActiveThreads,
+    activeThreadsFetched: true,
     archivedThreadsFetched: includeArchivedThreads,
+    activeThreadFetchMode: output.summary.activeThreadFetchMode,
+    importQueuePlan: output.summary.importQueuePlan,
+    activeThreadGuildsFetched: output.summary.activeThreadGuildsFetched,
+    activeThreads: output.summary.activeThreads,
+    importQueueJobsProcessed: output.summary.importQueueJobsProcessed,
     requestDelayMs,
     requestJitterMs,
     discordRequests: discord.getMetrics(),
@@ -171,63 +196,162 @@ async function fetchAllGuilds() {
   return guilds;
 }
 
-async function fetchGuildStructure(guildSummary) {
-  const guildIssues = [];
-  const channelsRaw = await discord.get(`/guilds/${guildSummary.id}/channels`);
-  const rolesRaw = await discord.get(`/guilds/${guildSummary.id}/roles`);
-  let activeThreads = [];
-  if (includeActiveThreads) {
+function createGuildRecord(guildSummary) {
+  return {
+    guildSummary,
+    channelsRaw: null,
+    rolesRaw: null,
+    activeThreadsRaw: [],
+    archivedThreadsRaw: [],
+    activeThreadsFailed: false,
+    accessIssues: [],
+  };
+}
+
+async function runChannelLaneJob({ record, accessIssues, queueSummary }) {
+  queueSummary.channelGuildsAttempted += 1;
+  try {
+    record.channelsRaw = await discord.get(`/guilds/${record.guildSummary.id}/channels`);
+    queueSummary.channelGuildsFetched += 1;
+  } catch (error) {
+    if (shouldAbortDiscordImport(error)) throw error;
+    const issue = {
+      scope: "channels",
+      guildId: record.guildSummary.id,
+      guildName: record.guildSummary.name,
+      status: error.status || null,
+      message: error.message,
+    };
+    record.accessIssues.push(issue);
+    accessIssues.push(issue);
+  }
+}
+
+async function runRoleLaneJob({ record, accessIssues, queueSummary }) {
+  queueSummary.roleGuildsAttempted += 1;
+  try {
+    record.rolesRaw = await discord.get(`/guilds/${record.guildSummary.id}/roles`);
+    queueSummary.roleGuildsFetched += 1;
+  } catch (error) {
+    if (shouldAbortDiscordImport(error)) throw error;
+    const issue = {
+      scope: "roles",
+      guildId: record.guildSummary.id,
+      guildName: record.guildSummary.name,
+      status: error.status || null,
+      message: error.message,
+    };
+    record.accessIssues.push(issue);
+    accessIssues.push(issue);
+  }
+}
+
+async function runActiveThreadLaneJob({ record, queueSummary }) {
+  if (!hasBaseGuildData(record)) {
+    queueSummary.activeThreadGuildsSkipped += 1;
+    return;
+  }
+
+  queueSummary.activeThreadGuildsAttempted += 1;
+  try {
+    const activeThreadsResult = await discord.get(`/guilds/${record.guildSummary.id}/threads/active`);
+    const threadsRaw = Array.isArray(activeThreadsResult.threads) ? activeThreadsResult.threads : [];
+    record.activeThreadsRaw = threadsRaw;
+    queueSummary.activeThreadGuildsFetched += 1;
+    queueSummary.activeThreads += threadsRaw.length;
+  } catch (error) {
+    if (shouldAbortDiscordImport(error)) throw error;
+    record.activeThreadsFailed = true;
+    record.accessIssues.push({
+      scope: "active_threads",
+      status: error.status || null,
+      message: error.message,
+    });
+  }
+}
+
+async function runArchivedThreadLaneJob({ record, queueSummary }) {
+  if (!hasBaseGuildData(record) || record.activeThreadsFailed) {
+    queueSummary.archivedThreadGuildsSkipped += 1;
+    return;
+  }
+
+  queueSummary.archivedThreadGuildsAttempted += 1;
+  const threadableChannels = normalizeBaseChannels(record.channelsRaw)
+    .filter((channel) => ["text", "announcement", "forum", "media"].includes(channel.type));
+
+  for (const channel of threadableChannels) {
+    queueSummary.archivedThreadChannelsAttempted += 1;
     try {
-      const activeThreadsResult = await discord.get(`/guilds/${guildSummary.id}/threads/active`);
-      activeThreads = Array.isArray(activeThreadsResult.threads) ? activeThreadsResult.threads : [];
+      const channelThreads = await fetchPublicArchivedThreads(channel.id);
+      record.archivedThreadsRaw.push(...channelThreads);
+      queueSummary.archivedThreadChannelsFetched += 1;
+      queueSummary.archivedThreads += channelThreads.length;
     } catch (error) {
       if (shouldAbortDiscordImport(error)) throw error;
-      guildIssues.push({
-        scope: "active_threads",
+      record.accessIssues.push({
+        scope: "public_archived_threads",
+        channelId: channel.id,
         status: error.status || null,
         message: error.message,
       });
     }
   }
 
-  const threadableChannels = channelsRaw.filter((channel) => ["text", "announcement", "forum", "media"].includes(toChannelType(channel.type)));
-  const archivedThreadResults = [];
-  if (includeArchivedThreads) {
-    for (const channel of threadableChannels) {
-      try {
-        archivedThreadResults.push(await fetchPublicArchivedThreads(channel.id));
-      } catch (error) {
-        if (shouldAbortDiscordImport(error)) throw error;
-        guildIssues.push({
-          scope: "public_archived_threads",
-          channelId: channel.id,
-          status: error.status || null,
-          message: error.message,
+  queueSummary.archivedThreadGuildsFetched += 1;
+}
+
+function hasBaseGuildData(record) {
+  return Array.isArray(record.channelsRaw) && Array.isArray(record.rolesRaw);
+}
+
+function buildGuildsFromRecords(records, accessIssues) {
+  const guilds = [];
+
+  for (const record of records) {
+    if (!hasBaseGuildData(record)) {
+      if (record.accessIssues.length === 0) {
+        accessIssues.push({
+          scope: "guild_output",
+          guildId: record.guildSummary.id,
+          guildName: record.guildSummary.name,
+          status: null,
+          message: "Skipped guild output because channels or roles were not available.",
         });
       }
+      continue;
     }
+    guilds.push(buildGuildFromRecord(record));
   }
 
-  const threadsRaw = uniqueById([...activeThreads, ...archivedThreadResults.flat()]);
-  const channels = normalizeChannels(channelsRaw, threadsRaw);
-  const roles = normalizeRoles(rolesRaw);
-  const overrides = buildOverrides([...channelsRaw, ...threadsRaw], roles.map((role) => role.id));
-  applyCategorySync(channels, channelsRaw);
+  return guilds;
+}
+
+function buildGuildFromRecord(record) {
+  const roles = normalizeRoles(record.rolesRaw);
+  const threadsRaw = uniqueById([...record.activeThreadsRaw, ...record.archivedThreadsRaw]);
+  const channels = orderChannels([
+    ...normalizeBaseChannels(record.channelsRaw),
+    ...normalizeThreadChannels(threadsRaw),
+  ]);
+  const overrides = buildOverrides([...record.channelsRaw, ...threadsRaw], roles.map((role) => role.id));
+  applyCategorySync(channels, record.channelsRaw);
 
   return {
-    id: guildSummary.id,
-    guildName: guildSummary.name,
-    icon: guildSummary.icon || null,
-    approximateMemberCount: guildSummary.approximate_member_count || null,
-    approximatePresenceCount: guildSummary.approximate_presence_count || null,
+    id: record.guildSummary.id,
+    guildName: record.guildSummary.name,
+    icon: record.guildSummary.icon || null,
+    approximateMemberCount: record.guildSummary.approximate_member_count || null,
+    approximatePresenceCount: record.guildSummary.approximate_presence_count || null,
     source: "discord-api-read-only",
     fetchedAt,
     channels,
     roles,
     overrides,
-    accessIssues: guildIssues,
+    accessIssues: record.accessIssues,
     limitations: [
-      ...(includeActiveThreads ? [] : ["Active threads were not fetched during bulk import. Use the screen-level thread fetch button to load them per channel."]),
+      "Read-only import uses three FIFO Queue lanes: channel_structure, role_list, then thread_fetch.",
+      "Thread lane jobs are planned up front and are not appended after the channel lane drains.",
       ...(includeArchivedThreads ? [] : ["Archived threads were not fetched by default. Set DISCORD_FETCH_ARCHIVED_THREADS=true to include public archived threads."]),
       ...(importMaxGuilds ? [`Import was limited to ${importMaxGuilds} guilds by DISCORD_IMPORT_MAX_GUILDS.`] : []),
     ],
@@ -253,29 +377,27 @@ async function fetchPublicArchivedThreads(channelId) {
   return threads;
 }
 
-function normalizeChannels(channelsRaw, threadsRaw) {
-  const normalChannels = channelsRaw
-    .map((channel) => ({
-      id: channel.id,
-      type: toChannelType(channel.type),
-      name: channel.name,
-      parentId: channel.parent_id || null,
-      position: Number.isFinite(channel.position) ? channel.position : 0,
-      nsfw: Boolean(channel.nsfw),
-    }));
+function normalizeBaseChannels(channelsRaw) {
+  return channelsRaw.map((channel) => ({
+    id: channel.id,
+    type: toChannelType(channel.type),
+    name: channel.name,
+    parentId: channel.parent_id || null,
+    position: Number.isFinite(channel.position) ? channel.position : 0,
+    nsfw: Boolean(channel.nsfw),
+  }));
+}
 
-  const threadChannels = threadsRaw
-    .map((thread) => ({
-      id: thread.id,
-      type: toChannelType(thread.type),
-      name: thread.name,
-      parentId: thread.parent_id || null,
-      position: Number.isFinite(thread.position) ? thread.position : 0,
-      archived: Boolean(thread.thread_metadata?.archived),
-      locked: Boolean(thread.thread_metadata?.locked),
-    }));
-
-  return orderChannels([...normalChannels, ...threadChannels]);
+function normalizeThreadChannels(threadsRaw) {
+  return threadsRaw.map((thread) => ({
+    id: thread.id,
+    type: toChannelType(thread.type),
+    name: thread.name,
+    parentId: thread.parent_id || null,
+    position: Number.isFinite(thread.position) ? thread.position : 0,
+    archived: Boolean(thread.thread_metadata?.archived),
+    locked: Boolean(thread.thread_metadata?.locked),
+  }));
 }
 
 function normalizeRoles(rolesRaw) {
@@ -389,6 +511,70 @@ function intToHex(value) {
 
 function uniqueById(items) {
   return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
+function createImportQueueLanes() {
+  const laneOrder = ["channel_structure", "role_list", "thread_fetch"];
+  const lanes = new Map(laneOrder.map((id) => [id, {
+    id,
+    jobs: [],
+    cursor: 0,
+    processed: 0,
+  }]));
+
+  return {
+    enqueue(laneId, job) {
+      const lane = lanes.get(laneId);
+      if (!lane) throw new Error(`Unknown import queue lane: ${laneId}`);
+      lane.jobs.push(job);
+    },
+    async run() {
+      for (const laneId of laneOrder) {
+        const lane = lanes.get(laneId);
+        while (lane.cursor < lane.jobs.length) {
+          const job = lane.jobs[lane.cursor];
+          lane.cursor += 1;
+          console.error(`Import queue lane ${lane.id} ${lane.cursor}/${lane.jobs.length} [${job.kind}]: ${job.label}`);
+          await job.run();
+          lane.processed += 1;
+        }
+      }
+    },
+    summary() {
+      return Object.fromEntries(laneOrder.map((laneId) => {
+        const lane = lanes.get(laneId);
+        return [laneId, {
+          jobsEnqueued: lane.jobs.length,
+          jobsProcessed: lane.processed,
+        }];
+      }));
+    },
+    get enqueued() {
+      return [...lanes.values()].reduce((sum, lane) => sum + lane.jobs.length, 0);
+    },
+    get processed() {
+      return [...lanes.values()].reduce((sum, lane) => sum + lane.processed, 0);
+    },
+  };
+}
+
+function createQueueSummary() {
+  return {
+    channelGuildsAttempted: 0,
+    channelGuildsFetched: 0,
+    roleGuildsAttempted: 0,
+    roleGuildsFetched: 0,
+    activeThreadGuildsAttempted: 0,
+    activeThreadGuildsFetched: 0,
+    activeThreadGuildsSkipped: 0,
+    activeThreads: 0,
+    archivedThreadGuildsAttempted: 0,
+    archivedThreadGuildsFetched: 0,
+    archivedThreadGuildsSkipped: 0,
+    archivedThreadChannelsAttempted: 0,
+    archivedThreadChannelsFetched: 0,
+    archivedThreads: 0,
+  };
 }
 
 function optionalPositiveInteger(value) {
