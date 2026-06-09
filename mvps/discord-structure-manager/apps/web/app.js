@@ -388,7 +388,7 @@ function renderRoles() {
 }
 
 function disclosureIcon(collapsed) {
-  return `<span class="disclosure-icon" aria-hidden="true">${collapsed ? "▶" : "▼"}</span>`;
+  return `<span class="disclosure-icon ${collapsed ? "is-collapsed" : "is-expanded"}" aria-hidden="true"></span>`;
 }
 
 function renderRoleRow(role) {

@@ -418,6 +418,24 @@ input[type="text"] {
   height: 12px;
 }
 
+.disclosure-icon::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.disclosure-icon.is-collapsed::before {
+  margin-top: -3px;
+  transform: rotate(45deg);
+}
+
+.disclosure-icon.is-expanded::before {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
 .collapse-spacer {
   width: 26px;
   height: 1px;
