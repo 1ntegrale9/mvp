@@ -195,7 +195,7 @@ let activeGuildId = guildStore.activeGuildId;
 let savedState = clone(activeGuildState());
 let draft = clone(savedState);
 let presets = [...presetSeeds, ...loadJson(PRESET_KEY, [])];
-let editing = false;
+const editing = true;
 let selectedChannels = new Set();
 let selectedRoles = new Set();
 let activeChannelId = null;
@@ -313,7 +313,6 @@ function renderTopbar() {
           </select>
         </label>
         <span class="status-pill"><span class="dot ${dirty ? "dirty" : ""}"></span>${dirty ? "未保存の変更あり" : savedLabel}</span>
-        <button class="btn ${editing ? "ghost" : "primary"}" data-action="toggle-edit">${editing ? "編集中" : "編集"}</button>
         <button class="btn good" data-action="save" ${dirty ? "" : "disabled"}>保存</button>
         <button class="btn" data-action="discard" ${dirty ? "" : "disabled"}>破棄</button>
         <button class="btn" data-action="reset">初期化</button>
@@ -810,7 +809,6 @@ function handleAction(event) {
     setActivePage(event.currentTarget.dataset.page);
     return;
   }
-  if (action === "toggle-edit") editing = true;
   if (action === "switch-guild") switchGuild(event.currentTarget.value);
   if (action === "fetch-threads") {
     fetchThreadsForChannel(id);
@@ -1354,13 +1352,11 @@ function saveDraft() {
   upsertGuildState(savedState);
   guildStore.activeGuildId = activeGuildId;
   const persisted = persistGuildStore();
-  editing = false;
   showToast(persisted ? "保存しました" : "保存しました（大きい読込データのため、このセッションのみ）");
 }
 
 function discardDraft() {
   draft = clone(savedState);
-  editing = false;
   normalizeSelection();
   showToast("変更を破棄しました");
 }
@@ -1373,7 +1369,6 @@ function resetDraft() {
   presets = [...presetSeeds];
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(PRESET_KEY);
-  editing = false;
   selectedChannels = new Set();
   selectedRoles = new Set();
   activeChannelId = null;
@@ -1444,7 +1439,6 @@ function switchGuild(guildId) {
   guildStore.activeGuildId = guildId;
   savedState = clone(next);
   draft = clone(savedState);
-  editing = false;
   selectedChannels = new Set();
   selectedRoles = new Set();
   activeChannelId = null;
