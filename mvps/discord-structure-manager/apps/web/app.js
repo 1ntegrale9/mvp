@@ -200,7 +200,9 @@ let selectedChannels = new Set();
 let selectedRoles = new Set();
 let activeChannelId = null;
 let activeRoleId = null;
+let activePresetId = presets[0]?.id || null;
 let activePage = pageFromHash();
+let sidebarOpen = true;
 let collapsedChannelIds = defaultCollapsedChannelIds(draft);
 let rolesCollapsed = true;
 let dragged = null;
@@ -228,6 +230,69 @@ function render() {
   bindEvents();
 }
 
+function renderChannelSidebarSection() {
+  const selectedCount = selectedChannels.size;
+  const syncable = syncableChannels();
+  const syncCount = syncable.filter((channel) => channel.synced).length;
+  return `
+    <section class="sidebar-section ${activePage === "channels" ? "active" : ""}">
+      <div class="sidebar-section-header">
+        <button class="section-switch" data-action="set-page" data-page="channels">
+          <span>チャンネル一覧</span>
+          <small>${selectedCount}件選択 · 同期 ${syncCount}/${syncable.length}</small>
+        </button>
+        <button class="mini-action" data-action="select-all-channels">全選択</button>
+      </div>
+      <div class="sidebar-list tree" data-list="channels">
+        ${renderVisibleChannelRows()}
+      </div>
+    </section>
+  `;
+}
+
+function renderRoleSidebarSection() {
+  return `
+    <section class="sidebar-section ${activePage === "roles" ? "active" : ""}">
+      <div class="sidebar-section-header">
+        <button class="section-switch" data-action="set-page" data-page="roles">
+          <span>ロール一覧</span>
+          <small>${selectedRoles.size}件選択 · ${draft.roles.length}ロール</small>
+        </button>
+        <button class="mini-action" data-action="select-all-roles">全選択</button>
+      </div>
+      <div class="sidebar-list role-list" data-list="roles">
+        ${draft.roles.map(renderRoleRow).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderPresetSidebarSection() {
+  return `
+    <section class="sidebar-section ${activePage === "presets" ? "active" : ""}">
+      <div class="sidebar-section-header">
+        <button class="section-switch" data-action="set-page" data-page="presets">
+          <span>プリセット一覧</span>
+          <small>${presets.length}件 · ${selectedChannels.size}ch × ${selectedRoles.size}role</small>
+        </button>
+      </div>
+      <div class="sidebar-list preset-list">
+        ${presets.map(renderPresetSidebarRow).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderPresetSidebarRow(preset) {
+  const active = selectedPreset()?.id === preset.id ? "active" : "";
+  return `
+    <button class="preset-row ${active}" data-action="activate-preset" data-id="${preset.id}">
+      <span>${escapeHtml(preset.name)}</span>
+      <small>${Object.keys(preset.permissions).length}権限 · ${preset.source === "custom" ? "カスタム" : "標準"}</small>
+    </button>
+  `;
+}
+
 function renderPageNav() {
   return `
     <nav class="page-nav" aria-label="管理ページ">
@@ -252,43 +317,111 @@ function renderActivePage() {
   return pageRenderers[activePage]?.() || renderChannelManagementPage();
 }
 
+function renderWorkbenchHeader(title, subtitle, meta = "") {
+  return `
+    <div class="workbench-header">
+      <div class="workbench-title-group">
+        <button class="btn sidebar-toggle" data-action="toggle-sidebar" aria-expanded="${sidebarOpen ? "true" : "false"}">
+          <span class="sidebar-toggle-mark" aria-hidden="true"></span>
+          <span>${sidebarOpen ? "一覧を閉じる" : "一覧を開く"}</span>
+        </button>
+        <div>
+          <p class="workbench-kicker">設定</p>
+          <h2>${title}</h2>
+          <p>${subtitle}</p>
+        </div>
+      </div>
+      ${meta ? `<div class="workbench-meta">${meta}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderChannelWorkbench() {
+  return `
+    <section class="workbench">
+      ${renderWorkbenchHeader(
+        "チャンネル設定",
+        activeChannelId ? "選択中のチャンネル詳細と一括操作" : "左のチャンネル一覧から対象を選択",
+        `${selectedChannels.size}件選択`
+      )}
+      <div class="workbench-grid">
+        ${renderChannelInspector()}
+        ${renderChannelControls()}
+      </div>
+    </section>
+  `;
+}
+
+function renderRoleWorkbench() {
+  return `
+    <section class="workbench">
+      ${renderWorkbenchHeader(
+        "ロール設定",
+        activeRoleId ? "選択中のロール詳細と並び順" : "左のロール一覧から対象を選択",
+        `${selectedRoles.size}件選択`
+      )}
+      <div class="workbench-grid">
+        ${renderRoleInspector()}
+        ${renderRoleControls()}
+      </div>
+    </section>
+  `;
+}
+
+function renderPresetWorkbench() {
+  return `
+    <section class="workbench">
+      ${renderWorkbenchHeader(
+        "権限プリセット設定",
+        "チェック済みのチャンネルとロールへプリセットを反映",
+        `${selectedChannels.size}ch × ${selectedRoles.size}role`
+      )}
+      <div class="workbench-grid presets-workbench">
+        ${renderPermissions()}
+        <section class="stack">
+          ${renderPresetDetail()}
+          ${renderPresetCreator()}
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderChannelManagementPage() {
   return `
-    <main class="page-layout channels-page">
-      <section class="stack">
-        ${renderChannels()}
-      </section>
-      <section class="stack">
-        ${renderChannelControls()}
-        ${renderChannelInspector()}
-      </section>
+    <main class="discord-layout page-workspace channels-page ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}">
+      <aside class="manager-sidebar page-sidebar" aria-label="チャンネル一覧">
+        <button class="drawer-close" data-action="close-sidebar">一覧を閉じる</button>
+        ${renderChannelSidebarSection()}
+      </aside>
+      <button class="sidebar-scrim" data-action="close-sidebar" aria-label="一覧を閉じる"></button>
+      ${renderChannelWorkbench()}
     </main>
   `;
 }
 
 function renderRoleManagementPage() {
   return `
-    <main class="page-layout roles-page">
-      <section class="stack">
-        ${renderRoles()}
-      </section>
-      <section class="stack">
-        ${renderRoleControls()}
-        ${renderRoleInspector()}
-      </section>
+    <main class="discord-layout page-workspace roles-page ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}">
+      <aside class="manager-sidebar page-sidebar" aria-label="ロール一覧">
+        <button class="drawer-close" data-action="close-sidebar">一覧を閉じる</button>
+        ${renderRoleSidebarSection()}
+      </aside>
+      <button class="sidebar-scrim" data-action="close-sidebar" aria-label="一覧を閉じる"></button>
+      ${renderRoleWorkbench()}
     </main>
   `;
 }
 
 function renderPresetManagementPage() {
   return `
-    <main class="page-layout presets-page">
-      <section class="stack">
-        ${renderPermissions()}
-      </section>
-      <section class="stack">
-        ${renderPresets()}
-      </section>
+    <main class="discord-layout page-workspace presets-page ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}">
+      <aside class="manager-sidebar page-sidebar" aria-label="プリセット一覧">
+        <button class="drawer-close" data-action="close-sidebar">一覧を閉じる</button>
+        ${renderPresetSidebarSection()}
+      </aside>
+      <button class="sidebar-scrim" data-action="close-sidebar" aria-label="一覧を閉じる"></button>
+      ${renderPresetWorkbench()}
     </main>
   `;
 }
@@ -318,28 +451,6 @@ function renderTopbar() {
         <button class="btn" data-action="reset">初期化</button>
       </div>
     </header>
-  `;
-}
-
-function renderChannels() {
-  const selectedCount = selectedChannels.size;
-  const syncable = syncableChannels();
-  const syncCount = syncable.filter((channel) => channel.synced).length;
-  return `
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2 class="panel-title">チャンネル</h2>
-          <p class="panel-subtitle">${selectedCount}件選択中 · 同期 ${syncCount}/${syncable.length}</p>
-        </div>
-        <button class="btn" data-action="select-all-channels">すべて選択</button>
-      </div>
-      <div class="panel-body">
-        <div class="tree" data-list="channels">
-          ${renderVisibleChannelRows()}
-        </div>
-      </div>
-    </section>
   `;
 }
 
@@ -400,12 +511,6 @@ function renderChannelRow(channel) {
           </span>
         ` : ""}
       </button>
-      <span class="row-actions">
-        ${renderThreadFetchButton(channel)}
-        ${isCategoryChild(channel) ? `<button class="btn sync-toggle ${channel.synced ? "on" : "off"}" title="カテゴリ同期を切り替え" data-action="toggle-sync" data-id="${channel.id}" ${editing ? "" : "disabled"}>${channel.synced ? "同期ON" : "同期OFF"}</button>` : ""}
-        <button class="btn icon" title="上へ移動" data-action="move-channel-up" data-id="${channel.id}" ${editing ? "" : "disabled"}>↑</button>
-        <button class="btn icon" title="下へ移動" data-action="move-channel-down" data-id="${channel.id}" ${editing ? "" : "disabled"}>↓</button>
-      </span>
     </div>
   `;
 }
@@ -425,30 +530,6 @@ function renderThreadFetchButton(channel) {
   return `<button class="btn thread-fetch ${status?.state || ""}" title="${escapeAttr(title)}" data-action="fetch-threads" data-id="${channel.id}" ${enabled ? "" : "disabled"}>${label}</button>`;
 }
 
-function renderRoles() {
-  return `
-    <section class="panel">
-      <div class="panel-header">
-        <div class="panel-heading-with-toggle">
-          <button class="btn icon collapse-toggle" data-action="toggle-roles-collapse" aria-label="ロール一覧を${rolesCollapsed ? "開く" : "閉じる"}" title="ロール一覧を${rolesCollapsed ? "開く" : "閉じる"}">${disclosureIcon(rolesCollapsed)}</button>
-          <div>
-            <h2 class="panel-title">ロール</h2>
-            <p class="panel-subtitle">${selectedRoles.size}件選択中 · 上にあるほど強い権限</p>
-          </div>
-        </div>
-        <div class="toolbar compact">
-          <button class="btn" data-action="select-all-roles">すべて選択</button>
-        </div>
-      </div>
-      <div class="panel-body ${rolesCollapsed ? "hidden" : ""}">
-        <div class="role-list" data-list="roles">
-          ${draft.roles.map(renderRoleRow).join("")}
-        </div>
-      </div>
-    </section>
-  `;
-}
-
 function disclosureIcon(collapsed) {
   return `<span class="disclosure-icon ${collapsed ? "is-collapsed" : "is-expanded"}" aria-hidden="true"></span>`;
 }
@@ -458,15 +539,11 @@ function renderRoleRow(role) {
   const active = activeRoleId === role.id ? "active" : "";
   return `
     <div class="row role-row ${active}" draggable="${editing}" data-kind="role" data-id="${role.id}">
-      <input type="checkbox" data-action="toggle-role" data-id="${role.id}" ${checked} />
+      <input type="checkbox" data-action="toggle-role" data-id="${role.id}" aria-label="${escapeAttr(role.name)}を選択" ${checked} />
       <span class="swatch" style="background:${role.color}"></span>
       <button class="name-line bare" data-action="activate-role" data-id="${role.id}">
         <strong>${escapeHtml(role.name)}</strong>
       </button>
-      <span class="row-actions">
-        <button class="btn icon" title="上へ移動" data-action="move-role-up" data-id="${role.id}" ${editing ? "" : "disabled"}>↑</button>
-        <button class="btn icon" title="下へ移動" data-action="move-role-down" data-id="${role.id}" ${editing ? "" : "disabled"}>↓</button>
-      </span>
     </div>
   `;
 }
@@ -528,55 +605,6 @@ function renderPermissionRow(permission) {
         </div>
       </td>
     </tr>
-  `;
-}
-
-function renderMoveControls() {
-  const categories = draft.channels.filter((channel) => channel.type === "category");
-  const roles = draft.roles;
-  const hasSelectedChannels = selectedChannels.size > 0;
-  const hasSelectedRoles = selectedRoles.size > 0;
-  return `
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2 class="panel-title">移動操作</h2>
-          <p class="panel-subtitle">ドラッグ、上下ボタン、移動先メニュー</p>
-        </div>
-      </div>
-      <div class="panel-body stack">
-        <div class="notice">チェックしたチャンネルはまとめて移動できます。行をドラッグ、各行の↑/↓、または下の移動先メニューを使ってください。</div>
-        <div class="two-col">
-          <button class="btn primary" data-action="sync-selected" ${editing && hasSelectedChannels ? "" : "disabled"}>選択チャンネルを同期ON</button>
-          <button class="btn" data-action="unsync-selected" ${editing && hasSelectedChannels ? "" : "disabled"}>選択チャンネルを同期OFF</button>
-        </div>
-        <div class="two-col">
-          <div class="field">
-            <label for="target-category">選択チャンネルの移動先</label>
-            <select id="target-category" data-field="target-category" ${editing ? "" : "disabled"}>
-              ${categories.map((category) => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join("")}
-            </select>
-          </div>
-          <div class="field">
-            <label for="target-channel-position">配置</label>
-            <select id="target-channel-position" data-field="target-channel-position" ${editing ? "" : "disabled"}>
-              <option value="bottom">カテゴリの末尾</option>
-              <option value="top">カテゴリの先頭</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn primary" data-action="move-selected-channels" ${editing && hasSelectedChannels ? "" : "disabled"}>選択チャンネルを移動</button>
-        <div class="field">
-          <label for="role-destination">選択ロールの移動先</label>
-          <select id="role-destination" data-field="role-destination" ${editing ? "" : "disabled"}>
-            <option value="top">最上部</option>
-            ${roles.map((role) => `<option value="${role.id}">${escapeHtml(role.name)}</option>`).join("")}
-            <option value="bottom">最下部</option>
-          </select>
-        </div>
-        <button class="btn primary" data-action="move-selected-roles" ${editing && hasSelectedRoles ? "" : "disabled"}>選択ロールを移動</button>
-      </div>
-    </section>
   `;
 }
 
@@ -644,6 +672,8 @@ function renderRoleControls() {
 
 function renderChannelInspector() {
   const channel = draft.channels.find((item) => item.id === activeChannelId);
+  const parent = channel?.parentId ? draft.channels.find((item) => item.id === channel.parentId) : null;
+  const childCount = channel ? childChannels(channel.id).length : 0;
   return `
     <section class="panel">
       <div class="panel-header">
@@ -652,12 +682,37 @@ function renderChannelInspector() {
           <p class="panel-subtitle">${channel ? escapeHtml(channel.name) : "未選択"}</p>
         </div>
       </div>
-      <div class="panel-body inspector">
-        <div class="field">
-          <label for="channel-name">チャンネル名</label>
-          <input id="channel-name" type="text" value="${escapeAttr(channel?.name || "")}" data-field="channel-name" ${editing && channel ? "" : "disabled"} />
+      ${channel ? `
+        <div class="panel-body inspector">
+          <div class="detail-hero">
+            <span class="type-badge large">${channelIcon(channel.type)}</span>
+            <div>
+              <h3>${escapeHtml(channel.name)}</h3>
+              <p>ID: ${escapeHtml(channel.id)}</p>
+            </div>
+          </div>
+          <div class="detail-grid">
+            <div class="metric compact"><span>種別</span><strong>${escapeHtml(channelIcon(channel.type))}</strong></div>
+            <div class="metric compact"><span>親</span><strong>${parent ? escapeHtml(parent.name) : "なし"}</strong></div>
+            <div class="metric compact"><span>子要素</span><strong>${childCount}</strong></div>
+            <div class="metric compact"><span>同期</span><strong>${syncStatusLabel(channel) || "対象外"}</strong></div>
+          </div>
+          <div class="field">
+            <label for="channel-name">チャンネル名</label>
+            <input id="channel-name" type="text" value="${escapeAttr(channel.name)}" data-field="channel-name" />
+          </div>
+          <div class="action-grid">
+            <button class="btn" title="上へ移動" data-action="move-channel-up" data-id="${channel.id}">上へ移動</button>
+            <button class="btn" title="下へ移動" data-action="move-channel-down" data-id="${channel.id}">下へ移動</button>
+            ${isCategoryChild(channel) ? `<button class="btn sync-toggle ${channel.synced ? "on" : "off"}" data-action="toggle-sync" data-id="${channel.id}">${channel.synced ? "カテゴリ同期ON" : "カテゴリ同期OFF"}</button>` : ""}
+            ${renderThreadFetchButton(channel)}
+          </div>
         </div>
-      </div>
+      ` : `
+        <div class="panel-body">
+          <div class="empty-state">未選択</div>
+        </div>
+      `}
     </section>
   `;
 }
@@ -672,88 +727,93 @@ function renderRoleInspector() {
           <p class="panel-subtitle">${role ? escapeHtml(role.name) : "未選択"}</p>
         </div>
       </div>
-      <div class="panel-body inspector">
-        <div class="field">
-          <label for="role-name">ロール名</label>
-          <input id="role-name" type="text" value="${escapeAttr(role?.name || "")}" data-field="role-name" ${editing && role ? "" : "disabled"} />
+      ${role ? `
+        <div class="panel-body inspector">
+          <div class="detail-hero">
+            <span class="role-avatar" style="background:${escapeAttr(role.color)}"></span>
+            <div>
+              <h3>${escapeHtml(role.name)}</h3>
+              <p>ID: ${escapeHtml(role.id)}</p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="role-name">ロール名</label>
+            <input id="role-name" type="text" value="${escapeAttr(role.name)}" data-field="role-name" />
+          </div>
+          <div class="field">
+            <label for="role-color">ロールカラー</label>
+            <input id="role-color" type="text" value="${escapeAttr(role.color)}" data-field="role-color" />
+          </div>
+          <div class="action-grid">
+            <button class="btn" title="上へ移動" data-action="move-role-up" data-id="${role.id}">上へ移動</button>
+            <button class="btn" title="下へ移動" data-action="move-role-down" data-id="${role.id}">下へ移動</button>
+          </div>
         </div>
-        <div class="field">
-          <label for="role-color">ロールカラー</label>
-          <input id="role-color" type="text" value="${escapeAttr(role?.color || "")}" data-field="role-color" ${editing && role ? "" : "disabled"} />
+      ` : `
+        <div class="panel-body">
+          <div class="empty-state">未選択</div>
         </div>
+      `}
+    </section>
+  `;
+}
+
+function renderPresetDetail() {
+  const preset = selectedPreset();
+  const hasTargets = hasPermissionTargets();
+  if (!preset) {
+    return `
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">プリセット詳細</h2>
+            <p class="panel-subtitle">未選択</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="empty-state">未選択</div>
+        </div>
+      </section>
+    `;
+  }
+
+  const entries = Object.entries(preset.permissions);
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">プリセット詳細</h2>
+          <p class="panel-subtitle">${preset.source === "custom" ? "カスタム" : "標準"} · ${entries.length}権限</p>
+        </div>
+        ${preset.source === "custom" ? `<button class="btn icon" title="プリセットを削除" data-action="delete-preset" data-id="${preset.id}">×</button>` : ""}
+      </div>
+      <div class="panel-body stack">
+        <article class="preset-detail">
+          <h3>${escapeHtml(preset.name)}</h3>
+          <p>${escapeHtml(preset.description)}</p>
+          <div class="chips">
+            ${entries.map(([permissionId, value]) => `<span class="chip ${value}">${shortPermission(permissionId)} ${valueLabel(value)}</span>`).join("")}
+          </div>
+        </article>
+        <button class="btn primary" data-action="apply-preset" data-id="${preset.id}" ${editing && hasTargets ? "" : "disabled"}>チェック済みに反映</button>
       </div>
     </section>
   `;
 }
 
-function renderPresets() {
+function renderPresetCreator() {
   const hasTargets = hasPermissionTargets();
   return `
     <section class="panel">
       <div class="panel-header">
         <div>
-          <h2 class="panel-title">権限プリセット</h2>
-          <p class="panel-subtitle">チェック済みのチャンネル/ロールへ一括反映</p>
+          <h2 class="panel-title">プリセット保存</h2>
+          <p class="panel-subtitle">現在の権限選択を保存</p>
         </div>
       </div>
       <div class="panel-body stack">
-        <div class="two-col">
-          <input class="control" type="text" placeholder="プリセット名" data-field="preset-name" ${editing ? "" : "disabled"} />
-          <button class="btn" data-action="save-preset" ${editing && hasTargets ? "" : "disabled"}>現在の設定を保存</button>
-        </div>
-        <div class="preset-list">
-          ${presets.map(renderPresetCard).join("")}
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderPresetCard(preset) {
-  const entries = Object.entries(preset.permissions);
-  const hasTargets = hasPermissionTargets();
-  return `
-    <article class="preset-card">
-      <header>
-        <div>
-          <h3>${escapeHtml(preset.name)}</h3>
-          <p>${escapeHtml(preset.description)}</p>
-        </div>
-        ${preset.source === "custom" ? `<button class="btn icon" title="プリセットを削除" data-action="delete-preset" data-id="${preset.id}" ${editing ? "" : "disabled"}>×</button>` : ""}
-      </header>
-      <div class="chips">
-        ${entries.slice(0, 6).map(([permissionId, value]) => `<span class="chip ${value}">${shortPermission(permissionId)} ${valueLabel(value)}</span>`).join("")}
-        ${entries.length > 6 ? `<span class="chip">+${entries.length - 6}</span>` : ""}
-      </div>
-      <button class="btn primary" data-action="apply-preset" data-id="${preset.id}" ${editing && hasTargets ? "" : "disabled"}>チェック済みに反映</button>
-    </article>
-  `;
-}
-
-function renderInspector() {
-  const channel = draft.channels.find((item) => item.id === activeChannelId);
-  const role = draft.roles.find((item) => item.id === activeRoleId);
-  return `
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2 class="panel-title">詳細編集</h2>
-          <p class="panel-subtitle">選択中のチャンネル/ロールを編集</p>
-        </div>
-      </div>
-      <div class="panel-body inspector">
-        <div class="field">
-          <label for="channel-name">選択中のチャンネル</label>
-          <input id="channel-name" type="text" value="${escapeAttr(channel?.name || "")}" data-field="channel-name" ${editing && channel ? "" : "disabled"} />
-        </div>
-        <div class="field">
-          <label for="role-name">選択中のロール</label>
-          <input id="role-name" type="text" value="${escapeAttr(role?.name || "")}" data-field="role-name" ${editing && role ? "" : "disabled"} />
-        </div>
-        <div class="field">
-          <label for="role-color">ロールカラー</label>
-          <input id="role-color" type="text" value="${escapeAttr(role?.color || "")}" data-field="role-color" ${editing && role ? "" : "disabled"} />
-        </div>
+        <input class="control" type="text" placeholder="プリセット名" data-field="preset-name" />
+        <button class="btn" data-action="save-preset" ${editing && hasTargets ? "" : "disabled"}>現在の設定を保存</button>
       </div>
     </section>
   `;
@@ -809,6 +869,16 @@ function handleAction(event) {
     setActivePage(event.currentTarget.dataset.page);
     return;
   }
+  if (action === "toggle-sidebar") {
+    sidebarOpen = !sidebarOpen;
+    render();
+    return;
+  }
+  if (action === "close-sidebar") {
+    sidebarOpen = false;
+    render();
+    return;
+  }
   if (action === "switch-guild") switchGuild(event.currentTarget.value);
   if (action === "fetch-threads") {
     fetchThreadsForChannel(id);
@@ -824,8 +894,27 @@ function handleAction(event) {
   if (action === "toggle-roles-collapse") rolesCollapsed = !rolesCollapsed;
   if (action === "toggle-channel") toggleSet(selectedChannels, id);
   if (action === "toggle-role") toggleSet(selectedRoles, id);
-  if (action === "activate-channel") activeChannelId = id;
-  if (action === "activate-role") activeRoleId = id;
+  if (action === "activate-channel") {
+    activeChannelId = id;
+    if (activePage !== "channels") {
+      setActivePage("channels");
+      return;
+    }
+  }
+  if (action === "activate-role") {
+    activeRoleId = id;
+    if (activePage !== "roles") {
+      setActivePage("roles");
+      return;
+    }
+  }
+  if (action === "activate-preset") {
+    activePresetId = id;
+    if (activePage !== "presets") {
+      setActivePage("presets");
+      return;
+    }
+  }
   if (action === "move-channel-up") moveChannel(id, -1);
   if (action === "move-channel-down") moveChannel(id, 1);
   if (action === "move-role-up") moveItem(draft.roles, id, -1);
@@ -1178,12 +1267,14 @@ function saveCurrentPreset() {
     permissions: permissionsMap,
   };
   presets = [preset, ...presets];
+  activePresetId = preset.id;
   persistCustomPresets();
   showToast("プリセットを保存しました");
 }
 
 function deletePreset(presetId) {
   presets = presets.filter((preset) => preset.id !== presetId);
+  if (activePresetId === presetId) activePresetId = presets[0]?.id || null;
   persistCustomPresets();
   showToast("プリセットを削除しました");
 }
@@ -1666,6 +1757,10 @@ function permissionSourceId(channel) {
 
 function persistCustomPresets() {
   localStorage.setItem(PRESET_KEY, JSON.stringify(presets.filter((preset) => preset.source === "custom")));
+}
+
+function selectedPreset() {
+  return presets.find((preset) => preset.id === activePresetId) || presets[0] || null;
 }
 
 function isDirty() {
