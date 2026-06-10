@@ -236,16 +236,20 @@ input:disabled {
   padding: 16px 20px 24px;
 }
 
+.page-layout > .stack {
+  min-width: 0;
+}
+
 .channels-page {
-  grid-template-columns: minmax(440px, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 400px);
 }
 
 .roles-page {
-  grid-template-columns: minmax(360px, 620px) minmax(320px, 420px);
+  grid-template-columns: minmax(0, 620px) minmax(320px, 420px);
 }
 
 .presets-page {
-  grid-template-columns: minmax(440px, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
 }
 
 @media (max-width: 1180px) {
@@ -346,6 +350,12 @@ input:disabled {
   padding: 12px 14px 14px;
 }
 
+.panel-body > .btn {
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+
 .stack {
   display: grid;
   gap: 16px;
@@ -369,6 +379,7 @@ input:disabled {
 .field {
   display: grid;
   gap: 5px;
+  min-width: 0;
 }
 
 .field label {
@@ -382,6 +393,7 @@ input:disabled {
 select,
 input[type="text"] {
   width: 100%;
+  min-width: 0;
   min-height: 36px;
   padding: 0 10px;
   color: var(--ink);
@@ -392,8 +404,20 @@ input[type="text"] {
 
 .two-col {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  min-width: 0;
+}
+
+.two-col > * {
+  min-width: 0;
+}
+
+.two-col .btn {
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .tree,
