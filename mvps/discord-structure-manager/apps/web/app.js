@@ -2,9 +2,9 @@ const STORAGE_KEY = "discord-structure-manager-state-discord-ids-ja";
 const PRESET_KEY = "discord-structure-manager-presets-numeric-ja";
 const IMPORTED_GUILDS_URL = "data/discord-guilds.json";
 const pageDefinitions = [
-  { id: "channels", label: "チャンネル管理" },
-  { id: "roles", label: "ロール管理" },
-  { id: "presets", label: "権限プリセット管理" },
+  { id: "channels", label: "チャンネル管理", icon: "#" },
+  { id: "roles", label: "ロール管理", icon: "@" },
+  { id: "presets", label: "権限プリセット管理", icon: "▦" },
 ];
 
 const permissions = [
@@ -220,9 +220,8 @@ loadImportedGuilds();
 
 function render() {
   app.innerHTML = `
-    <div class="app-shell">
+    <div class="app-shell shell-sidebar-${sidebarOpen ? "open" : "closed"}">
       ${renderTopbar()}
-      ${renderPageNav()}
       ${renderActivePage()}
       <div class="toast" id="toast"></div>
     </div>
@@ -300,8 +299,10 @@ function renderPageNav() {
         <button class="page-tab ${activePage === page.id ? "active" : ""}"
           data-action="set-page"
           data-page="${page.id}"
+          aria-label="${page.label}"
+          title="${page.label}"
           aria-current="${activePage === page.id ? "page" : "false"}">
-          ${page.label}
+          <span class="page-tab-icon" aria-hidden="true">${page.icon}</span>
         </button>
       `).join("")}
     </nav>
@@ -319,14 +320,9 @@ function renderActivePage() {
 
 function renderWorkbenchHeader(title, subtitle, meta = "") {
   return `
-    <div class="workbench-header">
+    <div class="header-context">
       <div class="workbench-title-group">
-        <button class="btn sidebar-toggle" data-action="toggle-sidebar" aria-expanded="${sidebarOpen ? "true" : "false"}">
-          <span class="sidebar-toggle-mark" aria-hidden="true"></span>
-          <span>${sidebarOpen ? "一覧を閉じる" : "一覧を開く"}</span>
-        </button>
-        <div>
-          <p class="workbench-kicker">設定</p>
+        <div class="header-title-copy">
           <h2>${title}</h2>
           <p>${subtitle}</p>
         </div>
@@ -336,14 +332,30 @@ function renderWorkbenchHeader(title, subtitle, meta = "") {
   `;
 }
 
+function renderCurrentPageHeader() {
+  const pageHeaders = {
+    channels: [
+      `${selectedChannels.size}件選択`,
+      activeChannelId ? `選択中: ${draft.channels.find((channel) => channel.id === activeChannelId)?.name || "チャンネル"}` : "チャンネル未選択",
+      "",
+    ],
+    roles: [
+      `${selectedRoles.size}件選択`,
+      activeRoleId ? `選択中: ${draft.roles.find((role) => role.id === activeRoleId)?.name || "ロール"}` : "ロール未選択",
+      "",
+    ],
+    presets: [
+      `${selectedChannels.size}ch × ${selectedRoles.size}role`,
+      "プリセット反映先",
+      "",
+    ],
+  };
+  return renderWorkbenchHeader(...(pageHeaders[activePage] || pageHeaders.channels));
+}
+
 function renderChannelWorkbench() {
   return `
     <section class="workbench">
-      ${renderWorkbenchHeader(
-        "チャンネル設定",
-        activeChannelId ? "選択中のチャンネル詳細と一括操作" : "左のチャンネル一覧から対象を選択",
-        `${selectedChannels.size}件選択`
-      )}
       <div class="workbench-grid">
         ${renderChannelInspector()}
         ${renderChannelControls()}
@@ -355,11 +367,6 @@ function renderChannelWorkbench() {
 function renderRoleWorkbench() {
   return `
     <section class="workbench">
-      ${renderWorkbenchHeader(
-        "ロール設定",
-        activeRoleId ? "選択中のロール詳細と並び順" : "左のロール一覧から対象を選択",
-        `${selectedRoles.size}件選択`
-      )}
       <div class="workbench-grid">
         ${renderRoleInspector()}
         ${renderRoleControls()}
@@ -371,11 +378,6 @@ function renderRoleWorkbench() {
 function renderPresetWorkbench() {
   return `
     <section class="workbench">
-      ${renderWorkbenchHeader(
-        "権限プリセット設定",
-        "チェック済みのチャンネルとロールへプリセットを反映",
-        `${selectedChannels.size}ch × ${selectedRoles.size}role`
-      )}
       <div class="workbench-grid presets-workbench">
         ${renderPermissions()}
         <section class="stack">
@@ -391,10 +393,10 @@ function renderChannelManagementPage() {
   return `
     <main class="discord-layout page-workspace channels-page ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}">
       <aside class="manager-sidebar page-sidebar" aria-label="チャンネル一覧">
-        <button class="drawer-close" data-action="close-sidebar">一覧を閉じる</button>
         ${renderChannelSidebarSection()}
       </aside>
       <button class="sidebar-scrim" data-action="close-sidebar" aria-label="一覧を閉じる"></button>
+      ${renderDrawerRailToggle()}
       ${renderChannelWorkbench()}
     </main>
   `;
@@ -404,10 +406,10 @@ function renderRoleManagementPage() {
   return `
     <main class="discord-layout page-workspace roles-page ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}">
       <aside class="manager-sidebar page-sidebar" aria-label="ロール一覧">
-        <button class="drawer-close" data-action="close-sidebar">一覧を閉じる</button>
         ${renderRoleSidebarSection()}
       </aside>
       <button class="sidebar-scrim" data-action="close-sidebar" aria-label="一覧を閉じる"></button>
+      ${renderDrawerRailToggle()}
       ${renderRoleWorkbench()}
     </main>
   `;
@@ -417,41 +419,81 @@ function renderPresetManagementPage() {
   return `
     <main class="discord-layout page-workspace presets-page ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}">
       <aside class="manager-sidebar page-sidebar" aria-label="プリセット一覧">
-        <button class="drawer-close" data-action="close-sidebar">一覧を閉じる</button>
         ${renderPresetSidebarSection()}
       </aside>
       <button class="sidebar-scrim" data-action="close-sidebar" aria-label="一覧を閉じる"></button>
+      ${renderDrawerRailToggle()}
       ${renderPresetWorkbench()}
     </main>
+  `;
+}
+
+function renderDrawerRailToggle() {
+  const label = sidebarOpen ? "一覧を閉じる" : "一覧を開く";
+  return `
+    <button class="drawer-rail-toggle" data-action="toggle-sidebar" aria-label="${label}" title="${label}" aria-expanded="${sidebarOpen ? "true" : "false"}">
+      <span>${label}</span>
+    </button>
   `;
 }
 
 function renderTopbar() {
   const dirty = isDirty();
   const savedLabel = draft.lastSavedAt ? `保存済み ${formatTime(draft.lastSavedAt)}` : "初期状態";
+  const currentPage = currentPageDefinition();
+  const ownerLabel = draft.ownerName || draft.ownerUsername || "オーナー未取得";
   return `
     <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark">D</div>
-        <div>
-          <h1>Discord構成マネージャー</h1>
-          <p>${escapeHtml(draft.guildName)} · ローカル下書き</p>
+      <div class="topbar-main">
+        <div class="server-header">
+          ${renderGuildIcon(draft)}
+          <div class="server-identity">
+            <strong class="server-name">${escapeHtml(draft.guildName)}</strong>
+            <span class="server-owner">${escapeHtml(ownerLabel)}</span>
+            <span class="server-mode">${escapeHtml(currentPage.label)}</span>
+          </div>
+          ${renderPageNav()}
+          <label class="server-switch">
+            <span>サーバー</span>
+            <select data-action="switch-guild" ${dirty ? "disabled" : ""}>
+              ${guildStore.guilds.map((guild) => `<option value="${guild.id}" ${guild.id === activeGuildId ? "selected" : ""}>${escapeHtml(guild.guildName)}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="top-actions">
+          <span class="status-pill"><span class="dot ${dirty ? "dirty" : ""}"></span>${dirty ? "未保存の変更あり" : savedLabel}</span>
+          <button class="btn good header-icon-button" data-action="save" aria-label="保存" title="保存" ${dirty ? "" : "disabled"}>✓</button>
+          <button class="btn header-icon-button" data-action="discard" aria-label="破棄" title="破棄" ${dirty ? "" : "disabled"}>↶</button>
+          <button class="btn header-icon-button" data-action="reset" aria-label="初期化" title="初期化">↺</button>
         </div>
       </div>
-      <div class="top-actions">
-        <label class="server-switch">
-          <span>サーバー</span>
-          <select data-action="switch-guild" ${dirty ? "disabled" : ""}>
-            ${guildStore.guilds.map((guild) => `<option value="${guild.id}" ${guild.id === activeGuildId ? "selected" : ""}>${escapeHtml(guild.guildName)}</option>`).join("")}
-          </select>
-        </label>
-        <span class="status-pill"><span class="dot ${dirty ? "dirty" : ""}"></span>${dirty ? "未保存の変更あり" : savedLabel}</span>
-        <button class="btn good" data-action="save" ${dirty ? "" : "disabled"}>保存</button>
-        <button class="btn" data-action="discard" ${dirty ? "" : "disabled"}>破棄</button>
-        <button class="btn" data-action="reset">初期化</button>
+      <div class="topbar-management">
+        ${renderCurrentPageHeader()}
       </div>
     </header>
   `;
+}
+
+function currentPageDefinition() {
+  return pageDefinitions.find((page) => page.id === activePage) || pageDefinitions[0];
+}
+
+function renderGuildIcon(guild) {
+  const url = guildIconUrl(guild);
+  if (url) {
+    return `<img class="server-icon" src="${escapeAttr(url)}" alt="${escapeAttr(guild.guildName)}" />`;
+  }
+  return `<span class="server-icon fallback" aria-hidden="true">${escapeHtml(serverInitial(guild.guildName))}</span>`;
+}
+
+function guildIconUrl(guild) {
+  if (!guild?.id || !guild.icon) return "";
+  const extension = String(guild.icon).startsWith("a_") ? "gif" : "webp";
+  return `https://cdn.discordapp.com/icons/${encodeURIComponent(guild.id)}/${encodeURIComponent(guild.icon)}.${extension}?size=80`;
+}
+
+function serverInitial(name) {
+  return String(name || "D").trim().slice(0, 1).toUpperCase() || "D";
 }
 
 function renderVisibleChannelRows() {
