@@ -204,6 +204,10 @@ button {
   transition: opacity 160ms ease, transform 180ms ease, padding 180ms ease;
 }
 
+.sidebar-open .manager-sidebar {
+  padding-left: 42px;
+}
+
 .sidebar-closed .manager-sidebar {
   padding-right: 0;
   padding-left: 0;
@@ -238,7 +242,7 @@ button {
   font-weight: 900;
   letter-spacing: 0;
   writing-mode: vertical-rl;
-  transition: left 180ms ease, background 140ms ease;
+  transition: background 140ms ease;
 }
 
 .drawer-rail-toggle:hover {
@@ -248,10 +252,6 @@ button {
 
 .drawer-rail-toggle span {
   line-height: 1;
-}
-
-.sidebar-open .drawer-rail-toggle {
-  left: min(360px, calc(100% - 30px));
 }
 
 .sidebar-open .workbench,
@@ -619,10 +619,6 @@ input:disabled {
     left: 0;
     z-index: 70;
     height: 100vh;
-  }
-
-  .sidebar-open .drawer-rail-toggle {
-    left: min(340px, calc(100vw - 40px));
   }
 
   .shell-sidebar-closed .topbar {
